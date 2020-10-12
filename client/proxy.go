@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"gopkg.in/bufio.v1"
 	"io"
 	"log"
 	"net"
@@ -13,57 +11,47 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
+	"gopkg.in/bufio.v1"
 )
 
-const (
-	stateInitial = iota
-	stateConnecting
-	stateKeepalive
-	stateReceiving
-	stateSending
-	stateIdle
+var (
+	errUnknownError = errors.New("some error")
 )
-
-var stateTransformations = map[int]map[int]struct{}{
-	stateInitial:    {stateConnecting: struct{}{}},
-	stateConnecting: {stateIdle: struct{}{}},
-	stateIdle:       {stateKeepalive: struct{}{}, stateReceiving: struct{}{}},
-	stateKeepalive:  {stateIdle: struct{}{}},
-	stateReceiving:  {stateSending: struct{}{}},
-	stateSending:    {stateIdle: struct{}{}},
-}
 
 type proxy struct {
 	state int
 	sync.Mutex
-	conn net.Conn
-	name string
-	pass string
-	localHost string
-	serverHost string
-	ctx context.Context
+	conn          net.Conn
+	name          string
+	pass          string
+	localHost     string
+	serverHost    string
+	ctx           context.Context
 	statCollector func(entry statEntry)
 }
 
-func newProxy(host string, name, pass string, sc func(entry statEntry)) *proxy {
-	p := new(proxy)
-	p.localHost = host
-	p.name = name
-	p.pass = pass
-	p.statCollector = sc
-
-	return p
+func newProxy(server, local string, name, pass string, sc func(entry statEntry)) *proxy {
+	p := proxy{
+		localHost:     local,
+		serverHost:    server,
+		name:          name,
+		pass:          pass,
+		statCollector: sc,
+	}
+	return &p
 }
 
-func(p *proxy) reconnect() error{
+func (p *proxy) reconnect(ctx context.Context) error {
 	var err error
 
-	for n :=0; n < 3; n++ {
+	for n := 0; n < 3; n++ {
 		select {
-		case<- p.ctx.Done():
-			return p.ctx.Err()
-			default:
-			if err := p.connect(p.ctx, p.serverHost); err !=nil {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			if err := p.connect(ctx); err != nil {
 				log.Println("failed to connect, reconnecting")
 				time.Sleep(3 * time.Second)
 			} else {
@@ -75,71 +63,44 @@ func(p *proxy) reconnect() error{
 	return err
 }
 
-func (p *proxy) connect(ctx context.Context, host string) error {
-	p.serverHost = host
-	p.ctx = ctx
-	/**if !p.setState(stateConnecting) {
-		log.Println("invalid state while connecting", p.state)
-		return unknownError
-	}
-
-	 */
-	log.Println("connecting")
+func (p *proxy) connect(ctx context.Context) error {
+	log.Println("connecting to server")
 	var err error
 	var d net.Dialer
-	p.conn, err =d.DialContext(ctx, "tcp4", host)
+	p.conn, err = d.DialContext(ctx, "tcp4", p.serverHost)
 	if err != nil {
-		log.Println("failed to connect", err)
-		return err
+		return errors.Wrap(err, "failed wile connecting")
 	}
 
 	fmt.Fprintf(p.conn, "%s %s\n", p.name, p.pass)
 
 	_, err = fmt.Fscanf(p.conn, "%s %s\n", &p.name, &p.pass)
-	if err != nil || p.pass == "" || p.name == "" {
-		log.Println("failed to register", p.name, p.pass, "error:", err)
-		return err
+	if err != nil {
+		return errors.Wrap(err, "failed to register")
 	}
-	log.Println("should be registered, I have to reply with ready")
+	if p.pass == "" || p.name == "" {
+		return fmt.Errorf("failed to register %s, %s", p.name, p.pass)
+	}
+
 	fmt.Fprintln(p.conn, "ready")
-/**
-	if !p.setState(stateIdle) {
-		log.Println("invalid state while connecting", p.state)
-		return unknownError
-	}
-
- */
+	log.Println("connected to server", p.serverHost, p.localHost, p.name, p.pass)
 	return nil
-}
-
-func (p *proxy) setState(state int) bool {
-	p.Lock()
-	defer p.Unlock()
-
-	if _, ok := stateTransformations[p.state][state]; ok {
-		p.state = state
-		return true
-	}
-	log.Println("cannot set state ", state, "from state", p.state)
-	return false
 }
 
 func (p *proxy) loop(ctx context.Context, wg *sync.WaitGroup) error {
 	defer wg.Done()
 	cli := http.DefaultClient
 	cli.Timeout = 3 * time.Second
-	log.Println("looping")
 
 	for {
 		select {
-		case <- ctx.Done():
-			log.Println("exiting loop")
+		case <-ctx.Done():
 			return nil
 		default:
 			err := p.read(cli)
 			if err != nil {
 				log.Println("what to do with the err", err)
-				if err := p.reconnect() ; err != nil{
+				if err := p.reconnect(ctx); err != nil {
 					return err
 				}
 			}
@@ -147,10 +108,9 @@ func (p *proxy) loop(ctx context.Context, wg *sync.WaitGroup) error {
 	}
 }
 
-
 func (p *proxy) read(cli *http.Client) error {
 	stat := statEntry{
-		Took:      0,
+		Took: 0,
 	}
 	var method, url string
 	var hs, bs int
@@ -164,7 +124,7 @@ func (p *proxy) read(cli *http.Client) error {
 	stat.Timestamp = time.Now()
 	if method == "" || url == "" {
 		log.Println("invalid request received")
-		return unknownError
+		return errUnknownError
 	}
 	url = p.localHost + url
 	hb := make([]byte, hs)
@@ -177,28 +137,28 @@ func (p *proxy) read(cli *http.Client) error {
 	bn, err := io.ReadFull(p.conn, bb)
 	if err != nil || bn != bs {
 		log.Println("invalid body", bn, bs, string(bb))
-		return unknownError
+		return errUnknownError
 	}
 	br := bufio.NewBuffer(bb)
 	req, err := http.NewRequest(method, url, br)
 
 	if err != nil {
 		log.Println("failed to create request", err)
-		return unknownError
+		return errUnknownError
 	}
 	headerString := string(hb)
 	for _, l := range strings.Split(headerString, "\n") {
 		var k, v string
 		fmt.Sscanf(l, "%s %s", &k, &v)
 		k = strings.Trim(k, ":")
-		if len(k)>0 {
+		if len(k) > 0 {
 			req.Header.Add(k, v)
 		}
 	}
 	res, err := cli.Do(req)
 	if err != nil {
 		log.Println("failed to exec request", err)
-		return unknownError
+		return errUnknownError
 	}
 
 	headerBuffer := bytes.NewBuffer([]byte{})
@@ -213,5 +173,3 @@ func (p *proxy) read(cli *http.Client) error {
 	p.statCollector(stat)
 	return nil
 }
-
-var unknownError = errors.New("something happened")
