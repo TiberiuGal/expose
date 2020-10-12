@@ -22,7 +22,7 @@ const statsServer = ":8028"
 
 func init() {
 	flag.StringVar(&localhost, "host", "http://localhost:8022", "local host address")
-	flag.StringVar(&localhost, "host", defaultServerHost, "server address")
+	flag.StringVar(&serverHost, "server", defaultServerHost, "server address")
 	flag.Parse()
 
 }
@@ -44,14 +44,17 @@ func main() {
 	ctx, cancelFunc := context.WithCancel(context.TODO())
 	var wg sync.WaitGroup
 
-	ss := newStatServer(statsServer, ctx)
-	p := newProxy(localhost, "unu", "orem", ss.collect)
-	if err := p.connect(ctx, grokHost); err != nil {
-		return
-	}
-	wg.Add(1)
-	go p.loop(ctx, &wg)
+	ss := newStatServer(ctx, statsServer)
+	p := newProxy(serverHost, localhost, "unu", "orem", ss.collect)
 
+	wg.Add(1)
+	go func() {
+		err := p.loop(ctx, &wg)
+		if err != nil {
+			log.Println(err)
+		}
+		wg.Done()
+	}()
 	go func() {
 		<-ctx.Done()
 		p.conn.Close()

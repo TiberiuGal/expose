@@ -88,6 +88,9 @@ func (p *proxy) connect(ctx context.Context) error {
 }
 
 func (p *proxy) loop(ctx context.Context, wg *sync.WaitGroup) error {
+	if err := p.connect(ctx); err != nil {
+		return
+	}
 	defer wg.Done()
 	cli := http.DefaultClient
 	cli.Timeout = 3 * time.Second
