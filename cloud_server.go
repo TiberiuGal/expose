@@ -1,6 +1,7 @@
 package expose
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -8,18 +9,20 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // NewServer - creates a http server to handle incomming requests
 func NewCloudServer() *cloudServer {
 	s := &cloudServer{}
-	s.connections = make(map[string]*http.Client)
+	s.edgeConnections = make(map[string]*http.Client)
 	return s
 }
 
 // a simple http handler that receives a request and proxies it to a tcp connection
 type cloudServer struct {
-	connections map[string]*http.Client
+	edgeConnections map[string]*http.Client
+	lock            sync.RWMutex
 }
 
 func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -31,22 +34,22 @@ func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	hostName := strings.Split(strings.Split(r.Host, ":")[0], ".")[0]
 
-	conn, ok := s.connections[hostName]
+	s.lock.RLock()
+	conn, ok := s.edgeConnections[hostName]
+	s.lock.RUnlock()
 	if !ok {
 		w.WriteHeader(http.StatusBadGateway)
 		fmt.Fprintln(w, "no connection found for host", hostName)
-		log.Printf("no connection found for host %s, %+v \n", hostName, s.connections)
 		return
 	}
 	pr, err := http.NewRequest(r.Method, r.URL.String(), r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
-
 		fmt.Fprintln(w, "error creating proxy request", err)
 		return
 	}
 	pr.Header = r.Header
-	log.Println("proxying request to", hostName)
+
 	resp, err := conn.Do(pr)
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
@@ -54,59 +57,59 @@ func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	log.Println("got response", resp.Status)
+
 	w.WriteHeader(resp.StatusCode)
 	for k, v := range resp.Header {
 		w.Header().Set(k, v[0])
-		log.Println("header from response", k, v[0])
 	}
 
-	// w.Write([]byte("abc\r\n"))
-	respBytes, err := io.ReadAll(resp.Body)
-	log.Println("read response body", len(respBytes), respBytes)
-	n, err := w.Write(respBytes)
-	// n, err := bufio.NewReader(resp.Body).WriteTo(w) //
-	// n, err := io.Copy(w, resp.Body)
+	_, err = io.Copy(w, resp.Body)
 	if err != nil {
 		fmt.Fprintln(w, "error writing proxy response", err)
 		return
 	}
-	// w.Write(respBytes)
-	log.Println("wrote response", resp.Status, len(respBytes), n)
+
 }
 
 func generateNewHostname() string {
 	return "host" + strconv.Itoa(rand.Intn(100000))
 }
 
+// Accept - accepts a connection and creates a new http client
 func (s *cloudServer) Accept(conn io.ReadWriter) error {
-	buff := make([]byte, 1024)
-	n, err := conn.Read(buff)
+	host, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		log.Println("error reading from connection", err)
 		return err
 	}
-	log.Println("read", n, "bytes from connection", buff[:n])
-	host := string(buff[:n-2])
+
+	host = strings.Trim(host, "\n")
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	if host == NoExplicitHostRequest {
+		// generate a new host
 		for {
 			host = generateNewHostname()
-			if _, ok := s.connections[host]; !ok {
+			if _, ok := s.edgeConnections[host]; !ok {
+
 				break
 			}
 		}
 	}
 
-	if _, ok := s.connections[host]; ok {
-		log.Println("connection already exists for host", host)
+	if _, ok := s.edgeConnections[host]; ok {
 		conn.Write([]byte("ERR connection already exists\r\n"))
 		return nil
 	}
-	conn.Write([]byte("OK " + host + "\r\n"))
+	_, err = conn.Write([]byte("OK " + host + "\r\n"))
+	if err != nil {
+		log.Println("error writing to connection", err)
+		return err
+	}
 	client := http.Client{
 		Transport: NewProxyConn(conn),
 	}
-	s.connections[host] = &client
-	log.Println("new connection accepted for host", host)
+	s.edgeConnections[host] = &client
+
 	return nil
 }
