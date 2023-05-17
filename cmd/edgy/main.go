@@ -9,24 +9,24 @@ import (
 )
 
 func main() {
-	props := properties.MustLoadFile("edgy.env", properties.UTF8)
+	props, _ := properties.LoadAll([]string{"edgy.env"}, properties.UTF8, true)
 	var cfg edgeConfig
 	if err := props.Decode(&cfg); err != nil {
 		log.Fatal(err)
 	}
 
-	outboundConn, err := net.Dial("tcp", cfg.InboundServerAddr)
+	cloudConnection, err := net.Dial("tcp", cfg.CloudServerAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer outboundConn.Close()
-	log.Println("Starting gclient")
-	srv := expose.NewEdgeServer(cfg.LocalServerAddr, cfg.DesiredNamespace, outboundConn)
+	defer cloudConnection.Close()
+
+	srv := expose.NewEdgeServer(cfg.LocalServerAddr, cfg.Hostname, cloudConnection)
 	srv.Run()
 }
 
 type edgeConfig struct {
-	InboundServerAddr string
-	LocalServerAddr   string
-	DesiredNamespace  string `properties:"DesiredNamespace,default="`
+	CloudServerAddr string `properties:"cloud,default=localhost:1044"`
+	LocalServerAddr string `properties:"local,default=localhost:80"`
+	Hostname        string `properties:"hostname,default="`
 }

@@ -10,12 +10,12 @@ import (
 )
 
 type config struct {
-	InboundAddress      string
-	EdgeListenerAddress string
+	InboundAddress      string `properties:"inbound,default=:80"`
+	EdgeListenerAddress string `properties:"edge_listener,default=:1044"`
 }
 
 func main() {
-	props := properties.MustLoadFile("cloudy.env", properties.UTF8)
+	props, _ := properties.LoadAll([]string{"cloudy.env"}, properties.UTF8, true)
 	var cfg config
 	if err := props.Decode(&cfg); err != nil {
 		log.Fatal(err)
@@ -23,27 +23,26 @@ func main() {
 
 	s := expose.NewCloudServer()
 
-	ln, err := net.Listen("tcp", cfg.EdgeListenerAddress)
+	edgeListener, err := net.Listen("tcp", cfg.EdgeListenerAddress)
 	if err != nil {
 		log.Fatal(err)
 	}
 	go func() {
 		for {
-			conn, err := ln.Accept()
+			conn, err := edgeListener.Accept()
 			if err != nil {
 				log.Println("error accepting connection", err)
 				continue
 			}
 			err = s.Accept(conn)
 			if err != nil {
-				log.Println("error accepting connection", err)
+				log.Println("error oppening tunel ", err)
 				continue
 			}
-			log.Println("new connection accepted", conn.RemoteAddr())
 		}
 	}()
 
-	log.Printf("starting incoming http server [%s] \n", cfg.InboundAddress)
+	log.Printf("starting http server [%s] \n", cfg.InboundAddress)
 	err = http.ListenAndServe(cfg.InboundAddress, s)
 	log.Println("server closed", err)
 }
