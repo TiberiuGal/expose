@@ -7,7 +7,7 @@ Allows you to expose any local webserver to the web
 Imagine the following scenario. You're building a website to some customer. The customer wants to see a live version of the site - but you don't want to deploy it to a public server yet. You want to show it to the customer first. You can use expose to expose your local webserver to the web.
 
 # How
-download the latest release from [here](), optionally edit config file (edgy.env) and run the app 
+download the latest release from [here](https://github.com/TiberiuGal/expose/releases), optionally edit config file (edgy.env) and run the app 
 
 Edgy will connect to cloudy and will wait for requests from cloudy, it will give you the url to access your local webserver from the web. You can share that url with anyone and they will be able to access your local webserver.
 
@@ -24,7 +24,5 @@ The protocol is not encrypted and does not use any authentication.
 
 # TODO
 - [ ] add authentication and encryption to the protocol
-- [ ] add support for https 
 - [ ] add support for websockets 
-- [ ] add support for any tcp connection (might be overkill `ssh -R` is a better solution for that)
-- [ ] allow users to reserver a custom subdomain
+- [ ] allow users to reserve a custom subdomain
