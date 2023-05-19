@@ -10,7 +10,7 @@ import (
 )
 
 type config struct {
-	InboundAddress      string `properties:"inbound,default=:80"`
+	InboundAddress      string `properties:"inbound,default=:8080"`
 	EdgeListenerAddress string `properties:"edge_listener,default=:1044"`
 }
 
