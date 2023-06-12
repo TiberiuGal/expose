@@ -3,6 +3,7 @@ module github.com/tiberiugal/expose
 go 1.20
 
 require (
+	github.com/gorilla/websocket v1.5.0
 	github.com/magiconair/properties v1.8.7
 	github.com/stretchr/testify v1.8.2
 )

@@ -50,7 +50,10 @@ func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pr.Header = r.Header
-
+	if r.Header.Get("Upgrade") == "websocket" {
+		conn.UpgradeToWebsocket(w, pr)
+		return
+	}
 	resp, err := conn.Do(pr)
 	log.Println("cloudy: got response")
 	if err != nil {

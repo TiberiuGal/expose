@@ -46,7 +46,49 @@ func (m *multiplexer) ReadLoop() {
 		}
 		m.streams[streamId] <- bb[4:]
 	}
-	log.Panicln("read loop exited")
+	log.Panic("read loop exited")
+}
+
+func (m *multiplexer) UpgradeToWebsocket(w http.ResponseWriter, r *http.Request) {
+	// get the session id from the request
+	// create a new session
+	// write the session id to the response
+	// start a goroutine to read from the websocket and write to the session
+	// start a goroutine to read from the session and write to the websocket
+	// return
+	sessionId := m.newSession()
+	log.Println("new session upgraded to ws", sessionId)
+	secKey := r.Header.Get("Sec-Websocket-Key")
+	secAccept := base64.StdEncoding.EncodeToString(append([]byte(secKey), []byte("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")...))
+
+	w.Header().Set("Connection", "Upgrade")
+	w.Header().Set("Upgrade", "websocket")
+	w.Header().Set("Sec-Websocket-Accept", secAccept)
+	w.WriteHeader(http.StatusSwitchingProtocols)
+	w.Write(encodeId(sessionId))
+	go func() {
+		for {
+			bb := make([]byte, 1024)
+			n, err := r.Body.Read(bb)
+			if err != nil {
+				log.Println("error reading from websocket", err)
+				return
+			}
+			log.Println("read from websocket", sessionId, string(bb[:n]))
+			m.Write(sessionId, bb[:n])
+		}
+	}()
+
+	for {
+		bb, err := m.ReadLine(sessionId)
+		if err != nil {
+			log.Println("error reading from session", err)
+			return
+		}
+		log.Println("read from session", sessionId, string(bb))
+		w.Write(bb)
+	}
+
 }
 
 func encodeId(id int) []byte {
@@ -170,8 +212,18 @@ func decodeRequest(bb []byte) *http.Request {
 	req.URL, _ = url.Parse(data["url"].(string))
 	req.Header = http.Header{}
 	req.URL.Scheme = "http"
-	for k, v := range data["header"].(map[string]interface{}) {
-		req.Header.Add(k, v.(string))
+
+	header := data["header"].(map[string]interface{})
+	for k, v := range header {
+		switch v.(type) {
+		case []interface{}:
+			for _, val := range v.([]interface{}) {
+				req.Header.Add(k, val.(string))
+			}
+		case string:
+			req.Header.Add(k, v.(string))
+
+		}
 	}
 	if _, exists := data["body"]; exists {
 		body, _ := base64.RawStdEncoding.DecodeString(data["body"].(string))

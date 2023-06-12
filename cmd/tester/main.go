@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/tiberiugal/expose"
 )
@@ -51,6 +52,7 @@ func main() {
 	rw := &responseWriter{header: make(http.Header)}
 	req, _ := http.NewRequest("GET", "/lorem", nil)
 	req.Host = "tibi"
+	req.Header.Add("X-WaitFor", "3s")
 	<-waifForConnection
 	cloudServer.ServeHTTP(rw, req)
 	fmt.Println(rw.status)
@@ -94,6 +96,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	log.Println("received request", r.Host, r.RequestURI, r.Header)
 	io.Copy(os.Stdout, r.Body)
+	if wf := r.Header.Get("X-WaitFor"); wf != "" {
+		fmt.Println("waiting for", wf)
+		d, _ := time.ParseDuration(wf)
+		time.Sleep(d)
+	}
 	fmt.Fprint(w, "lorem ipsum", h.cnt)
 	fmt.Fprintln(w, r.RequestURI)
+
 }
