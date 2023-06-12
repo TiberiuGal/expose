@@ -2,7 +2,6 @@ package expose
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -50,35 +49,30 @@ func (s *edgeServer) Run() {
 	}
 
 	for {
-		req, err := http.ReadRequest(reader)
-		if err == io.EOF {
-			log.Println("connection closed")
-			return
-		}
+		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			log.Println("error reading from connection", err)
-			continue
+			return
 		}
+		log.Println("got line", string(line), " bytes ", line[:4])
+		id := line[:4]
+		req := decodeRequest(line[4:])
 		req.URL.Scheme = "http"
 		req.URL.Host = s.localEndpoint
-		req.RequestURI = ""
+
 		resp, err := s.localConn.Do(req)
 		if err != nil {
 			log.Println("error sending request to local", err)
 			continue
 		}
-		fmt.Fprintf(s.outboundConn, "HTTP/1.1 %s\r\n", resp.Status)
-		for k, v := range resp.Header {
-			fmt.Fprintf(s.outboundConn, "%s:%s\r\n", k, strings.Join(v, ","))
-		}
-		fmt.Fprint(s.outboundConn, "\r\n")
-		_, err = io.Copy(s.outboundConn, resp.Body)
 
-		if err != nil {
-			log.Println("error copying response to cloud", err)
-			continue
-		}
-		fmt.Fprintf(s.outboundConn, "\r\n%s\r\n", EndOfResponseMarker)
-		resp.Body.Close()
+		encodedResp := encodeResponse(resp)
+		encodedResp = append(encodedResp, '\n')
+		encodedResp = append(encodedResp, id...)
+		encodedResp = append(encodedResp, []byte(EndOfResponseMarker)...)
+		encodedResp = append(encodedResp, '\n')
+		log.Println("encoded response, sending")
+		s.outboundConn.Write(append(id, encodedResp...))
+		log.Println("sent response")
 	}
 }

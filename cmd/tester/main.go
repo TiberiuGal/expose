@@ -30,7 +30,7 @@ func main() {
 				log.Println("error accepting connection", err)
 				continue
 			}
-			err = cloudServer.Accept(conn)
+			err = cloudServer.AcceptEdgeConnection(conn)
 			if err != nil {
 				log.Println("error accepting connection", err)
 				continue
@@ -55,7 +55,6 @@ func main() {
 	cloudServer.ServeHTTP(rw, req)
 	fmt.Println(rw.status)
 	fmt.Println(string(rw.body))
-
 }
 
 type responseWriter struct {
