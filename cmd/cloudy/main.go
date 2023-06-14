@@ -34,7 +34,7 @@ func main() {
 				log.Println("error accepting connection", err)
 				continue
 			}
-			err = s.Accept(conn)
+			err = s.AcceptEdgeConnection(conn)
 			if err != nil {
 				log.Println("error oppening tunel ", err)
 				continue

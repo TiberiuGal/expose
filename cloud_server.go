@@ -15,14 +15,15 @@ import (
 // NewServer - creates a http server to handle incomming requests
 func NewCloudServer() *cloudServer {
 	s := &cloudServer{}
-	s.edgeConnections = make(map[string]*http.Client)
+	s.edgeConnections = make(map[string]*multiplexer)
 	return s
 }
 
 // a simple http handler that receives a request and proxies it to a tcp connection
 type cloudServer struct {
-	edgeConnections map[string]*http.Client
-	lock            sync.RWMutex
+	edgeConnections  map[string]*multiplexer
+	lock             sync.RWMutex
+	currentSessionID int
 }
 
 func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -49,8 +50,12 @@ func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pr.Header = r.Header
-
+	if r.Header.Get("Upgrade") == "websocket" {
+		conn.UpgradeToWebsocket(w, pr)
+		return
+	}
 	resp, err := conn.Do(pr)
+	log.Println("cloudy: got response")
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		fmt.Fprintln(w, "error writing proxy request", err)
@@ -62,21 +67,20 @@ func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for k, v := range resp.Header {
 		w.Header().Set(k, v[0])
 	}
-
+	log.Println("cloudy: writing response body")
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
 		fmt.Fprintln(w, "error writing proxy response", err)
 		return
 	}
-
 }
 
 func generateNewHostname() string {
 	return "host" + strconv.Itoa(rand.Intn(100000))
 }
 
-// Accept - accepts a connection and creates a new http client
-func (s *cloudServer) Accept(conn io.ReadWriter) error {
+// AcceptEdgeConnection - accepts a connection and creates a new http client
+func (s *cloudServer) AcceptEdgeConnection(conn io.ReadWriter) error {
 	host, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		log.Println("error reading from connection", err)
@@ -91,7 +95,6 @@ func (s *cloudServer) Accept(conn io.ReadWriter) error {
 		for {
 			host = generateNewHostname()
 			if _, ok := s.edgeConnections[host]; !ok {
-
 				break
 			}
 		}
@@ -106,10 +109,9 @@ func (s *cloudServer) Accept(conn io.ReadWriter) error {
 		log.Println("error writing to connection", err)
 		return err
 	}
-	client := http.Client{
-		Transport: NewProxyConn(conn),
-	}
-	s.edgeConnections[host] = &client
+
+	s.edgeConnections[host] = NewMultiplexer(conn)
+	go s.edgeConnections[host].ReadLoop()
 
 	return nil
 }

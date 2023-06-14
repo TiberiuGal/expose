@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/tiberiugal/expose"
 )
@@ -30,7 +31,7 @@ func main() {
 				log.Println("error accepting connection", err)
 				continue
 			}
-			err = cloudServer.Accept(conn)
+			err = cloudServer.AcceptEdgeConnection(conn)
 			if err != nil {
 				log.Println("error accepting connection", err)
 				continue
@@ -51,11 +52,11 @@ func main() {
 	rw := &responseWriter{header: make(http.Header)}
 	req, _ := http.NewRequest("GET", "/lorem", nil)
 	req.Host = "tibi"
+	req.Header.Add("X-WaitFor", "3s")
 	<-waifForConnection
 	cloudServer.ServeHTTP(rw, req)
 	fmt.Println(rw.status)
 	fmt.Println(string(rw.body))
-
 }
 
 type responseWriter struct {
@@ -95,6 +96,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	log.Println("received request", r.Host, r.RequestURI, r.Header)
 	io.Copy(os.Stdout, r.Body)
+	if wf := r.Header.Get("X-WaitFor"); wf != "" {
+		fmt.Println("waiting for", wf)
+		d, _ := time.ParseDuration(wf)
+		time.Sleep(d)
+	}
 	fmt.Fprint(w, "lorem ipsum", h.cnt)
 	fmt.Fprintln(w, r.RequestURI)
+
 }
