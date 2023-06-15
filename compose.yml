@@ -1,0 +1,20 @@
+services:
+  web:
+    build: docker/demo
+    ports:
+      - "80:80"
+
+
+  cloudy:
+    build: docker/cloudy
+    ports:
+      - "8080:8080"
+      - "1044:1044"
+
+  edgy:
+    build: docker/edgy
+    volumes:
+      - ./docker/edgy:/etc/expose/
+    depends_on:
+      - cloudy  
+  

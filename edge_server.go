@@ -36,7 +36,7 @@ func NewEdgeServer(local, namespace string, cloudConn io.ReadWriter) *edgeServer
 // Run starts the proxy server
 func (s *edgeServer) Run() {
 	s.outboundConn.Write([]byte(s.desiredHostname + "\n"))
-
+	log.Println("edge: sent desired hostname", s.desiredHostname)
 	reader := bufio.NewReader(s.outboundConn)
 	ackMessage, err := reader.ReadString('\n')
 	if err != nil {
@@ -50,6 +50,7 @@ func (s *edgeServer) Run() {
 	if parts[0] != "OK" {
 		log.Fatal("invalid ack message", ackMessage)
 	}
+	log.Println("edge: got ack", ackMessage)
 
 	for {
 		line, err := reader.ReadBytes('\n')

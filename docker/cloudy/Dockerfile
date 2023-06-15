@@ -1,7 +1,7 @@
 #FROM ubuntu:20.04
 FROM scratch
 
-COPY bin/cloudy cloudy
+COPY cloudy cloudy
 
 EXPOSE 8080 1044
 

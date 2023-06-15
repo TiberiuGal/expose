@@ -1,3 +1,6 @@
 bin/
 *.env
+docker/edgy/edgy
+docker/cloudy/cloudy
+docker/demo/demo
 
