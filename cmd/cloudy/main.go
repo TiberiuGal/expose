@@ -15,7 +15,7 @@ type config struct {
 }
 
 func main() {
-	props, _ := properties.LoadAll([]string{"cloudy.env"}, properties.UTF8, true)
+	props, _ := properties.LoadAll([]string{"cloudy.env", "/etc/expose/cloudy.env"}, properties.UTF8, true)
 	var cfg config
 	if err := props.Decode(&cfg); err != nil {
 		log.Fatal(err)

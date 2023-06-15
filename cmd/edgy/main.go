@@ -9,12 +9,12 @@ import (
 )
 
 func main() {
-	props, _ := properties.LoadAll([]string{"edgy.env"}, properties.UTF8, true)
+	props, _ := properties.LoadAll([]string{"edgy.env", "/etc/expose/edgy.env"}, properties.UTF8, true)
 	var cfg edgeConfig
 	if err := props.Decode(&cfg); err != nil {
 		log.Fatal(err)
 	}
-
+	log.Println("cfg", cfg)
 	cloudConnection, err := net.Dial("tcp", cfg.CloudServerAddr)
 	if err != nil {
 		log.Fatal(err)

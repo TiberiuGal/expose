@@ -181,6 +181,7 @@ func decodeResponse(bb []byte) http.Response {
 		}
 	}
 	resp.Status = data["status"].(string)
+	resp.StatusCode = int(data["statusCode"].(float64))
 	body, _ := base64.RawStdEncoding.DecodeString(data["body"].(string))
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return resp
