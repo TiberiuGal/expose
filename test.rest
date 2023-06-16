@@ -1,0 +1,3 @@
+GET http://demo-proxy.dev:8080/agilefant/ajax/iteration/1 HTTP/1.1
+
+

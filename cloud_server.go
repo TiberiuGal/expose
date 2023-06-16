@@ -32,9 +32,7 @@ func (s *cloudServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 2. write the request
 	// 3. read the response
 	// 4. write the response
-
-	hostName := strings.Split(strings.Split(r.Host, ":")[0], ".")[0]
-
+	hostName := getHostname(r.Host)
 	s.lock.RLock()
 	conn, ok := s.edgeConnections[hostName]
 	s.lock.RUnlock()
@@ -114,4 +112,13 @@ func (s *cloudServer) AcceptEdgeConnection(conn io.ReadWriter) error {
 	go s.edgeConnections[host].ReadLoop()
 
 	return nil
+}
+
+func getHostname(requestHost string) string {
+	hostName := strings.Split(strings.Split(requestHost, ":")[0], ".")[0]
+
+	if len(hostName) > 6 && hostName[len(hostName)-6:] == "-proxy" {
+		hostName = hostName[:len(hostName)-6]
+	}
+	return hostName
 }
