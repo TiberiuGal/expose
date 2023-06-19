@@ -6,13 +6,49 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/tiberiugal/expose"
 )
 
 func main() {
+	u, err := url.Parse("/ws")
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("u %+v", u)
+	r := http.Request{}
+	r.URL = u
+	log.Printf("r %+v", r)
+	log.Println("r requesturi", r.URL.RequestURI())
+}
+
+func mainWS() {
+
+	conn, resp, err := websocket.DefaultDialer.Dial("ws://localhost:80/ws", nil)
+	if err != nil {
+		fmt.Println("error dialing", err)
+		return
+	}
+	defer conn.Close()
+	fmt.Println("got response", resp.Status)
+	conn.SetReadLimit(512)
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error { conn.SetReadDeadline(time.Now().Add(60 * time.Second)); return nil })
+
+	conn.WriteMessage(websocket.TextMessage, []byte("hello from client"))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		fmt.Println("error reading message", err)
+		return
+	}
+	fmt.Println("got message", string(msg))
+
+}
+func main2() {
 	h := &handler{}
 
 	go func() {

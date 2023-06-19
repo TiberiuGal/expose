@@ -12,6 +12,9 @@ import (
 	"net/url"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
+
+	"github.com/gorilla/websocket"
 )
 
 type multiplexer struct {
@@ -33,7 +36,9 @@ func (m *multiplexer) ReadLoop() {
 	r := bufio.NewReader(m.conn)
 	for {
 		bb, err := r.ReadBytes('\n')
-		if err != nil {
+		if err == io.EOF {
+			continue
+		} else if err != nil {
 			log.Println("error reading", err)
 			continue
 		}
@@ -49,6 +54,55 @@ func (m *multiplexer) ReadLoop() {
 	log.Panic("read loop exited")
 }
 
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin:     checkSameOrigin,
+}
+
+func checkSameOrigin(r *http.Request) bool {
+	origin := r.Header["Origin"]
+	log.Println("checking origin", origin)
+	if len(origin) == 0 {
+		log.Println("no origin, return true")
+		return true
+	}
+	u, err := url.Parse(origin[0])
+	if err != nil {
+		log.Println("error parsing origin", err)
+		return false
+	}
+	log.Printf("parsed origin [%+v] \n", u)
+	log.Println("testig origins", u.Host, r.Host)
+	return equalASCIIFold(u.Host, r.Host)
+}
+
+// equalASCIIFold returns true if s is equal to t with ASCII case folding as
+// defined in RFC 4790.
+func equalASCIIFold(s, t string) bool {
+	for s != "" && t != "" {
+		sr, size := utf8.DecodeRuneInString(s)
+		s = s[size:]
+		tr, size := utf8.DecodeRuneInString(t)
+		t = t[size:]
+		if sr == tr {
+			continue
+		}
+		if 'A' <= sr && sr <= 'Z' {
+			sr = sr + 'a' - 'A'
+		}
+		if 'A' <= tr && tr <= 'Z' {
+			tr = tr + 'a' - 'A'
+		}
+		if sr != tr {
+			return false
+		}
+	}
+	return s == t
+}
+
+// this doesn't work
+// use gorilla websocket instead
 func (m *multiplexer) UpgradeToWebsocket(w http.ResponseWriter, r *http.Request) {
 	// get the session id from the request
 	// create a new session
@@ -57,25 +111,44 @@ func (m *multiplexer) UpgradeToWebsocket(w http.ResponseWriter, r *http.Request)
 	// start a goroutine to read from the session and write to the websocket
 	// return
 	sessionId := m.newSession()
-	log.Println("new session upgraded to ws", sessionId)
-	secKey := r.Header.Get("Sec-Websocket-Key")
-	secAccept := base64.StdEncoding.EncodeToString(append([]byte(secKey), []byte("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")...))
+	log.Println("new session being upgraded to ws", sessionId)
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("error upgrading to websocket", err)
+		return
+	}
+	conn.WriteMessage(websocket.TextMessage, []byte("hello"))
+	log.Println("wrote session id to websocket", sessionId)
 
-	w.Header().Set("Connection", "Upgrade")
-	w.Header().Set("Upgrade", "websocket")
-	w.Header().Set("Sec-Websocket-Accept", secAccept)
-	w.WriteHeader(http.StatusSwitchingProtocols)
-	w.Write(encodeId(sessionId))
+	pr, err := http.NewRequest(r.Method, r.URL.String(), r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		fmt.Fprintln(w, "error creating proxy request", err)
+		return
+	}
+	pr.Header = r.Header
+	reqBody := encodeRequest(pr)
+	reqBody = append(reqBody, '\n')
+	m.Write(sessionId, reqBody)
+	_, err = m.ReadLine(sessionId)
+	if err != nil {
+		log.Println("error pushing websocket request to edge", err)
+	}
+
 	go func() {
+		log.Println("starting websocket read loop", sessionId)
 		for {
-			bb := make([]byte, 1024)
-			n, err := r.Body.Read(bb)
-			if err != nil {
+			_, bb, err := conn.ReadMessage()
+
+			if err == io.EOF {
+				continue
+			} else if err != nil {
 				log.Println("error reading from websocket", err)
 				return
 			}
-			log.Println("read from websocket", sessionId, string(bb[:n]))
-			m.Write(sessionId, bb[:n])
+			log.Println("read from websocket", sessionId, string(bb))
+			bb = append(bb, '\n')
+			m.Write(sessionId, bb)
 		}
 	}()
 
@@ -83,10 +156,11 @@ func (m *multiplexer) UpgradeToWebsocket(w http.ResponseWriter, r *http.Request)
 		bb, err := m.ReadLine(sessionId)
 		if err != nil {
 			log.Println("error reading from session", err)
+
 			return
 		}
 		log.Println("read from session", sessionId, string(bb))
-		w.Write(bb)
+		conn.WriteMessage(websocket.TextMessage, bb)
 	}
 
 }
@@ -160,9 +234,11 @@ func encodeResponse(resp *http.Response) []byte {
 	data["header"] = resp.Header
 	data["status"] = resp.Status
 	data["statusCode"] = resp.StatusCode
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	data["body"] = base64.StdEncoding.EncodeToString(body)
+	if resp.Body != nil {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		data["body"] = base64.StdEncoding.EncodeToString(body)
+	}
 	bb, _ := json.Marshal(data)
 	return bb
 }
@@ -182,8 +258,11 @@ func decodeResponse(bb []byte) http.Response {
 	}
 	resp.Status = data["status"].(string)
 	resp.StatusCode = int(data["statusCode"].(float64))
-	body, _ := base64.RawStdEncoding.DecodeString(data["body"].(string))
-	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if _, exists := data["body"]; exists {
+
+		body, _ := base64.RawStdEncoding.DecodeString(data["body"].(string))
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+	}
 	return resp
 }
 

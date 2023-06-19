@@ -19,7 +19,7 @@ dockerize:
 compose:
 	docker compose down
 	docker compose build
-	docker compose up -d
+	docker compose up 
 
 build-all:  build-edgy build-cloudy build-demo
 
